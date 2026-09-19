@@ -1,178 +1,332 @@
-#include <board.h>
 #include <iostream>
-#include <time.h>
+#include <vector>
+#include <string>
 #include <cstdlib>
+#include <ctime>
+#include <iomanip>
 
+using namespace std;
 
-using namespace std; 
+class Cell {
+private:
+    bool isMine;
+    bool isRevealed;
+    bool isFlagged;
+    int adjacentMines;
 
-//ctor
-Board::Board(int mines, int sizex, int sizey) : sizeX(sizex), sizeY(sizey)
-{
-	srand(time(NULL));
-	// init arrays
-	uif = new char* [sizeX];
-	data = new char* [sizeX];
-	for(int i = 0; i < sizeX; i++){
-		uif[i] = new char[sizeY];
-		data[i] = new char[sizeY];
-	}
+public:
+    Cell() : isMine(false), isRevealed(false), isFlagged(false), adjacentMines(0) {}
 
-	// fill arrays with dots
-	for(int y = 0; y < sizeY; y++)
-	{
-		for(int x = 0; x < sizeX; x++)
-		{
-			uif[x][y] = '.';
-			data[x][y] = '.';
-		}
-	}
+    // Getters
+    bool hasMine() const { return isMine; }
+    bool isOpened() const { return isRevealed; }
+    bool isMarked() const { return isFlagged; }
+    int getAdjacent() const { return adjacentMines; }
 
-	//add mines to data, not uif
-	for(int i = 0; i < mines; i++)
-	{
-		int x, y;
-		while(true)
-		{
-			x = rand() % sizeX;
-			y = rand() % sizeY;
-			if(data[x][y] != 'm')
-			{
-				data[x][y] = 'm';
-				break;
-			}
-		}
-	}
+    // Setters
+    void setMine(bool val) { isMine = val; }
+    void setRevealed(bool val) { isRevealed = val; }
+    void setFlagged(bool val) { isFlagged = val; }
+    void setAdjacent(int val) { adjacentMines = val; }
 
-	//add numbers to data, not uif
-	for(int y = 0; y < sizeY; y++)
-	{
-		for(int x = 0; x < sizeX; x++)
-		{
-			if(data[x][y] != 'm')
-			{
-				int minecount = 0;
-				addToMinecount(x - 1, y - 1, minecount);
-				addToMinecount(x, y - 1, minecount);
-				addToMinecount(x + 1, y - 1, minecount);
-				addToMinecount(x - 1, y, minecount);
-				addToMinecount(x + 1, y, minecount);
-				addToMinecount(x - 1, y + 1, minecount);
-				addToMinecount(x, y + 1, minecount);
-				addToMinecount(x + 1, y + 1, minecount);
-				char c = (char)(((int)'0')+minecount);
-				data[x][y] = c;
-			}
-		}
-	}
-}
+    // Reset ô
+    void reset() {
+        isMine = false;
+        isRevealed = false;
+        isFlagged = false;
+        adjacentMines = 0;
+    }
+};
 
-Board::~Board()
-{
-	// delete inner arrays
-	for(int i = 0; i < sizeY; i++)
-	{
-		delete[] data[i];
-		delete[] uif[i];
-	}
-	// delete outer arrays
-	delete[] data;
-	delete[] uif;
-}
+class Board {
+private:
+    int rows, cols, mineCount;
+    vector<vector<Cell>> grid;
+    int revealedCount;
+    int flagCount;
+    bool firstClick;
 
+    // Hàm hỗ trợ nội bộ
+    bool isValid(int r, int c) const {
+        return r >= 0 && r < rows && c >= 0 && c < cols;
+    }
 
-//print board
-void Board::print()
-{
-	// newline and 3 spaces
-	cout << endl << "   ";
+    void placeMines(int safeR, int safeC) {
+        // Bảo vệ ô đầu tiên và 8 ô xung quanh
+        vector<vector<bool>> forbidden(rows, vector<bool>(cols, false));
+        for (int dr = -1; dr <= 1; dr++) {
+            for (int dc = -1; dc <= 1; dc++) {
+                int nr = safeR + dr, nc = safeC + dc;
+                if (isValid(nr, nc)) forbidden[nr][nc] = true;
+            }
+        }
 
-	//print abcde... etc
-	for(int i = 0; i < sizeX; i++)
-	{
-		cout << (char) (97 + i);
-	}
-	cout << endl << endl;
+        vector<pair<int, int>> candidates;
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                if (!forbidden[r][c]) candidates.push_back({r, c});
 
-	for(int y = 0; y < sizeY; y++)
-	{
-		// a is nr 97 on ascii table, 97 + 1 to char = b
-		cout << (char) (97 + y) << "  ";
-		for(int x = 0; x < sizeX; x++)
-		{
-			// only print uif
-			cout << uif[x][y];
-		}
-		cout << endl;
-	}
-	cout << endl;
-}
+        // Xáo trộn Fisher-Yates
+        for (int i = (int)candidates.size() - 1; i > 0; i--) {
+            int j = rand() % (i + 1);
+            swap(candidates[i], candidates[j]);
+        }
 
-char Board::getData(int x, int y)
-{
-	if(x < sizeX && y < sizeY && x >= 0 && y >= 0)
-	{
-		return data[x][y];
-	}
+        int place = min(mineCount, (int)candidates.size());
+        for (int i = 0; i < place; i++) {
+            grid[candidates[i].first][candidates[i].second].setMine(true);
+        }
 
-	//if x or y arent in range
-	return 'o';
+        // Tính số mìn kề
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (grid[r][c].hasMine()) continue;
+                int count = 0;
+                for (int dr = -1; dr <= 1; dr++) {
+                    for (int dc = -1; dc <= 1; dc++) {
+                        if (dr == 0 && dc == 0) continue;
+                        int nr = r + dr, nc = c + dc;
+                        if (isValid(nr, nc) && grid[nr][nc].hasMine()) count++;
+                    }
+                }
+                grid[r][c].setAdjacent(count);
+            }
+        }
+    }
 
-}
+    int countFlagsAround(int r, int c) const {
+        int count = 0;
+        for (int dr = -1; dr <= 1; dr++) {
+            for (int dc = -1; dc <= 1; dc++) {
+                if (dr == 0 && dc == 0) continue;
+                int nr = r + dr, nc = c + dc;
+                if (isValid(nr, nc) && grid[nr][nc].isMarked()) count++;
+            }
+        }
+        return count;
+    }
 
-// copy minecount from data to uif
-void Board::moveToUIF(int x, int y)
-{
-	uif[x][y] = data[x][y];
-}
+public:
+    Board(int r, int c, int m) : rows(r), cols(c), mineCount(m) {
+        grid.assign(rows, vector<Cell>(cols));
+        revealedCount = 0;
+        flagCount = 0;
+        firstClick = true;
+    }
 
+    // Mở ô (Left Click)
+    void reveal(int r, int c) {
+        if (!isValid(r, c) || grid[r][c].isOpened() || grid[r][c].isMarked()) return;
 
-// recursive function if minecount == 0
-void Board::checkEmptyField(int x, int y)
-{
-	if(x >= 0 && y >= 0 && x < sizeX && y < sizeY)
-	{
-		if(data[x][y] == '0' && uif[x][y] == '.'){
-			uif[x][y] = '0';
-			checkEmptyField(x - 1, y - 1);
-			checkEmptyField(x, y - 1);
-			checkEmptyField(x + 1, y - 1);
-			checkEmptyField(x - 1, y);
-			checkEmptyField(x + 1, y);
-			checkEmptyField(x -1, y + 1);
-			checkEmptyField(x, y + 1);
-			checkEmptyField(x + 1, y + 1);
-		} else {
-			moveToUIF(x, y);
-		}
-	}
-}
+        // Lần click đầu tiên -> sinh mìn
+        if (firstClick) {
+            firstClick = false;
+            placeMines(r, c);
+        }
 
-// if data[x][y] contains mine, increment minecount
-int Board::addToMinecount(int x, int y, int& minecount){
-	if(x >= 0 && x < sizeX && y >= 0 && y < sizeY)
-	{
-		if(data[x][y] == 'm') minecount++;
-	}
-	return 0;
-}
+        grid[r][c].setRevealed(true);
+        revealedCount++;
 
+        if (grid[r][c].hasMine()) return; // Trúng mìn (Game Over sẽ được check bên ngoài)
 
-int Board::getGameStatus()
-{
-	for(int y = 0; y < sizeY; y++)
-	{
-		for(int x = 0; x < sizeX; x++)
-		{
+        // Lan truyền (Flood Fill) nếu ô trống
+        if (grid[r][c].getAdjacent() == 0) {
+            for (int dr = -1; dr <= 1; dr++) {
+                for (int dc = -1; dc <= 1; dc++) {
+                    if (dr == 0 && dc == 0) continue;
+                    reveal(r + dr, c + dc);
+                }
+            }
+        }
+    }
 
-			if(uif[x][y] == '.') {
-				if(data[x][y] != 'm')
-				{
-					return 0;
-				}
-			}
-			// if all dots are mines, return 1
-		}
-	}
-	return 1;
+    // Cắm cờ (Right Click)
+    void toggleFlag(int r, int c) {
+        if (!isValid(r, c) || grid[r][c].isOpened()) return;
+
+        if (grid[r][c].isMarked()) {
+            grid[r][c].setFlagged(false);
+            flagCount--;
+        } else {
+            if (flagCount >= mineCount) return; // Hết cờ
+            grid[r][c].setFlagged(true);
+            flagCount++;
+        }
+    }
+
+    // Chording (Click cả 2 chuột)
+    void chord(int r, int c) {
+        if (!isValid(r, c) || !grid[r][c].isOpened() || grid[r][c].getAdjacent() == 0 || grid[r][c].hasMine()) return;
+
+        if (countFlagsAround(r, c) == grid[r][c].getAdjacent()) {
+            for (int dr = -1; dr <= 1; dr++) {
+                for (int dc = -1; dc <= 1; dc++) {
+                    if (dr == 0 && dc == 0) continue;
+                    int nr = r + dr, nc = c + dc;
+                    if (isValid(nr, nc) && !grid[nr][nc].isMarked() && !grid[nr][nc].isOpened()) {
+                        reveal(nr, nc);
+                    }
+                }
+            }
+        }
+    }
+
+    // Kiểm tra thắng
+    bool isWin() const {
+        return revealedCount == rows * cols - mineCount;
+    }
+
+    // Kiểm tra thua (có ô mìn nào bị mở không)
+    bool isLose() const {
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                if (grid[r][c].hasMine() && grid[r][c].isOpened()) return true;
+        return false;
+    }
+
+    // Hiển thị bàn cờ
+    void print(bool showAll = false) const {
+        cout << "===== MINESWEEPER =====\n";
+        cout << "Co da dung: " << flagCount << "/" << mineCount << "\n\n";
+
+        cout << "    ";
+        for (int c = 0; c < cols; c++) cout << (c / 10 == 0 ? " " : to_string(c / 10)) << " ";
+        cout << "\n    ";
+        for (int c = 0; c < cols; c++) cout << (c % 10) << " ";
+        cout << "\n   +";
+        for (int c = 0; c < cols; c++) cout << "--";
+        cout << "+\n";
+
+        for (int r = 0; r < rows; r++) {
+            cout << setw(2) << r << " |";
+            for (int c = 0; c < cols; c++) {
+                char ch = '#';
+                if (grid[r][c].isOpened()) {
+                    if (grid[r][c].hasMine()) ch = '*';
+                    else if (grid[r][c].getAdjacent() == 0) ch = '.';
+                    else ch = '0' + grid[r][c].getAdjacent();
+                } else if (grid[r][c].isMarked()) {
+                    ch = 'F';
+                } else if (showAll && grid[r][c].hasMine()) {
+                    ch = '*';
+                }
+                cout << ch << " ";
+            }
+            cout << "|\n";
+        }
+        cout << "   +";
+        for (int c = 0; c < cols; c++) cout << "--";
+        cout << "+\n";
+    }
+};
+
+class Game {
+private:
+    Board* board;
+    bool isGameOver;
+    bool isWin;
+
+    void selectDifficulty() {
+        int level;
+        cout << "Chon do kho:\n";
+        cout << "1. De (8x8, 10 min)\n";
+        cout << "2. Trung binh (16x16, 40 min)\n";
+        cout << "3. Kho (30x16, 99 min)\n";
+        cout << "Nhap lua chon (1-3): ";
+        cin >> level;
+
+        int r, c, m;
+        if (level == 1) { r = 8; c = 8; m = 10; }
+        else if (level == 2) { r = 16; c = 16; m = 40; }
+        else { r = 16; c = 30; m = 99; } // 30 cot, 16 hang
+
+        board = new Board(r, c, m);
+    }
+
+public:
+    Game() : board(nullptr), isGameOver(false), isWin(false) {
+        srand((unsigned)time(nullptr));
+    }
+
+    ~Game() {
+        delete board;
+    }
+
+    void run() {
+        selectDifficulty();
+
+        cout << "\nHuong dan:\n";
+        cout << "  r c      -> Mo o (Click trai)\n";
+        cout << "  f r c    -> Cam/Bo co (Click phai)\n";
+        cout << "  c r c    -> Chord (Mo cac o xung quanh)\n";
+        cout << "  q        -> Thoat\n\n";
+        cout << "Nhan Enter de bat dau...";
+        cin.ignore(); cin.get();
+
+        while (!isGameOver) {
+            system("cls || clear");
+            board->print();
+
+            string cmd;
+            cout << "Nhap lenh: ";
+            cin >> cmd;
+
+            if (cmd == "q") {
+                cout << "Thoat game.\n";
+                return;
+            }
+
+            if (cmd == "f" || cmd == "c") {
+                int r, c;
+                if (!(cin >> r >> c)) {
+                    cin.clear(); cin.ignore(10000, '\n');
+                    cout << ">> Nhap sai toa do.\n"; continue;
+                }
+                if (cmd == "f") board->toggleFlag(r, c);
+                else board->chord(r, c);
+            } 
+            else {
+                int r, c;
+                try { r = stoi(cmd); } 
+                catch (...) { cout << ">> Lenh khong hop le.\n"; continue; }
+                
+                if (!(cin >> c)) {
+                    cin.clear(); cin.ignore(10000, '\n');
+                    cout << ">> Thieu cot.\n"; continue;
+                }
+
+                board->reveal(r, c);
+            }
+
+            // Kiểm tra trạng thái game
+            if (board->isLose()) {
+                isGameOver = true;
+                isWin = false;
+            } else if (board->isWin()) {
+                isGameOver = true;
+                isWin = true;
+            }
+        }
+
+        // Kết thúc
+        system("cls || clear");
+        board->print(true);
+        if (isWin) {
+            cout << "\nCHUC MUNG! Ban da chien thang!\n";
+        } else {
+            cout << "\nBUM! Ban da mo trung min. Thua!\n";
+        }
+    }
+};
+
+int main() {
+    char again = 'y';
+    while (again == 'y' || again == 'Y') {
+        Game game;
+        game.run();
+        cout << "\nChoi lai? (y/n): ";
+        cin >> again;
+    }
+    cout << "Tam biet!\n";
+    return 0;
 }
